@@ -149,7 +149,7 @@ class SimpleDiffusionTrainer(TrainerBase):
         for i in range(self.epoches):
             losses = []
             loop = tqdm(enumerate(self.train_loader), total=len(self.train_loader))
-            for step, (features, labels) in loop:
+            for step, (features) in loop:
                 features = features.to(self.device)
                 batch_size = features.shape[0]
 

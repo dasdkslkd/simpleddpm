@@ -15,8 +15,10 @@ from diffusionModels.simpleDiffusion.simpleDiffusion import DiffusionModel
 data_root_path = "./dataset/"
 if not os.path.exists(data_root_path):
     os.makedirs(data_root_path)
-
+#
 imagenet_data = torchvision.datasets.FashionMNIST(data_root_path, train=True, download=False, transform=transforms.ToTensor())
+
+
 
 image_size = 28
 channels = 1

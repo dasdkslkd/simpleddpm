@@ -77,7 +77,7 @@ def Upsample(dim, dim_out=None):
     """
     return nn.Sequential(
         nn.Upsample(scale_factor=2, mode="nearest"),            # 先使用最近邻填充将数据在长宽上翻倍
-        nn.Conv2d(dim, default(dim_out, dim), 3, padding=1),    # 再使用卷积对翻倍后的数据提取局部相关关系填充
+        nn.Conv3d(dim, default(dim_out, dim), 3, padding=1),    # 再使用卷积对翻倍后的数据提取局部相关关系填充
     )
 
 
@@ -97,7 +97,7 @@ def Downsample(dim, dim_out=None):
         # 将输入张量的形状由 (batch_size, channel, height, width) 变换为 (batch_size, channel * 4, height / 2, width / 2)
         Rearrange("b c (h p1) (w p2) -> b (c p1 p2) h w", p1=2, p2=2),
         # 对变换后的张量进行一个 $1 \times 1$ 的卷积操作，将通道数从 dim * 4（即变换后的通道数）降到 dim（即指定的输出通道数），得到输出张量。
-        nn.Conv2d(dim * 4, default(dim_out, dim), 1),
+        nn.Conv3d(dim * 4, default(dim_out, dim), 1),
     )
 
 

@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from utils.networkHelper import *
 
 
-class WeightStandardizedConv2d(nn.Conv2d):
+class WeightStandardizedConv3d(nn.Conv3d):
     """
     权重标准化后的卷积模块
     https://arxiv.org/abs/1903.10520
@@ -21,7 +21,7 @@ class WeightStandardizedConv2d(nn.Conv2d):
         var = reduce(weight, "o ... -> o 1 1 1", partial(torch.var, unbiased=False))
         normalized_weight = (weight - mean) * (var + eps).rsqrt()
 
-        return F.conv2d(
+        return F.conv3d(
             x,
             normalized_weight,
             self.bias,
@@ -35,7 +35,7 @@ class WeightStandardizedConv2d(nn.Conv2d):
 class Block(nn.Module):
     def __init__(self, dim, dim_out, groups=8):
         super().__init__()
-        self.proj = WeightStandardizedConv2d(dim, dim_out, 3, padding=1)
+        self.proj = WeightStandardizedConv3d(dim, dim_out, 3, padding=1)
         self.norm = nn.GroupNorm(groups, dim_out)
         self.act = nn.SiLU()
 
@@ -64,13 +64,13 @@ class ResnetBlock(nn.Module):
 
         self.block1 = Block(dim, dim_out, groups=groups)
         self.block2 = Block(dim_out, dim_out, groups=groups)
-        self.res_conv = nn.Conv2d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
+        self.res_conv = nn.Conv3d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
 
     def forward(self, x, time_emb=None):
         scale_shift = None
         if exists(self.mlp) and exists(time_emb):
             time_emb = self.mlp(time_emb)
-            time_emb = rearrange(time_emb, "b c -> b c 1 1")
+            time_emb = rearrange(time_emb, "b c -> b c 1 1 1")
             scale_shift = time_emb.chunk(2, dim=1)
 
         h = self.block1(x, scale_shift=scale_shift)
@@ -84,14 +84,14 @@ class Attention(nn.Module):
         self.scale = dim_head**-0.5
         self.heads = heads
         hidden_dim = dim_head * heads
-        self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, 1, bias=False)
-        self.to_out = nn.Conv2d(hidden_dim, dim, 1)
+        self.to_qkv = nn.Conv3d(dim, hidden_dim * 3, 1, bias=False)
+        self.to_out = nn.Conv3d(hidden_dim, dim, 1)
 
     def forward(self, x):
         b, c, h, w = x.shape
         qkv = self.to_qkv(x).chunk(3, dim=1)
         q, k, v = map(
-            lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.heads), qkv
+            lambda t: rearrange(t, "b (h c) x y z-> b h c (x y z)", h=self.heads), qkv
         )
         q = q * self.scale
 
@@ -100,7 +100,7 @@ class Attention(nn.Module):
         attn = sim.softmax(dim=-1)
 
         out = einsum("b h i j, b h d j -> b h i d", attn, v)
-        out = rearrange(out, "b h (x y) d -> b (h d) x y", x=h, y=w)
+        out = rearrange(out, "b h (x y z) d -> b (h d) x y z", x=h, y=w)
         return self.to_out(out)
 
 
@@ -110,16 +110,16 @@ class LinearAttention(nn.Module):
         self.scale = dim_head**-0.5
         self.heads = heads
         hidden_dim = dim_head * heads
-        self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, 1, bias=False)
+        self.to_qkv = nn.Conv3d(dim, hidden_dim * 3, 1, bias=False)
 
-        self.to_out = nn.Sequential(nn.Conv2d(hidden_dim, dim, 1),
+        self.to_out = nn.Sequential(nn.Conv3d(hidden_dim, dim, 1),
                                     nn.GroupNorm(1, dim))
 
     def forward(self, x):
-        b, c, h, w = x.shape
+        b, c, h, w, d= x.shape
         qkv = self.to_qkv(x).chunk(3, dim=1)
         q, k, v = map(
-            lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.heads), qkv
+            lambda t: rearrange(t, "b (h c) x y z-> b h c (x y z)", h=self.heads), qkv
         )
 
         q = q.softmax(dim=-2)
@@ -129,7 +129,7 @@ class LinearAttention(nn.Module):
         context = torch.einsum("b h d n, b h e n -> b h d e", k, v)
 
         out = torch.einsum("b h d e, b h d n -> b h e n", context, q)
-        out = rearrange(out, "b h c (x y) -> b (h c) x y", h=self.heads, x=h, y=w)
+        out = rearrange(out, "b h c (x y z) -> b (h c) x y z", h=self.heads, x=h, y=w)
         return self.to_out(out)
 
 
@@ -163,7 +163,7 @@ class Unet(nn.Module):
         input_channels = channels * (2 if self_condition else 1)
 
         init_dim = default(init_dim, dim)
-        self.init_conv = nn.Conv2d(input_channels, init_dim, 1, padding=0) # changed to 1 and 0 from 7,3
+        self.init_conv = nn.Conv3d(input_channels, init_dim, 1, padding=0) # changed to 1 and 0 from 7,3
 
         dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
@@ -196,7 +196,7 @@ class Unet(nn.Module):
                         Residual(PreNorm(dim_in, LinearAttention(dim_in))),
                         Downsample(dim_in, dim_out)
                         if not is_last
-                        else nn.Conv2d(dim_in, dim_out, 3, padding=1),
+                        else nn.Conv3d(dim_in, dim_out, 3, padding=1),
                     ]
                 )
             )
@@ -217,7 +217,7 @@ class Unet(nn.Module):
                         Residual(PreNorm(dim_out, LinearAttention(dim_out))),
                         Upsample(dim_out, dim_in)
                         if not is_last
-                        else nn.Conv2d(dim_out, dim_in, 3, padding=1),
+                        else nn.Conv3d(dim_out, dim_in, 3, padding=1),
                     ]
                 )
             )
@@ -225,7 +225,7 @@ class Unet(nn.Module):
         self.out_dim = default(out_dim, channels)
 
         self.final_res_block = block_klass(dim * 2, dim, time_emb_dim=time_dim)
-        self.final_conv = nn.Conv2d(dim, self.out_dim, 1)
+        self.final_conv = nn.Conv3d(dim, self.out_dim, 1)
 
     def forward(self, x, time, x_self_cond=None):
         if self.self_condition:
